@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: typecast-sample
+
+typecast:
+  base-url: https://api.typecast.ai
+  # 키는 환경변수로 주입 (코드/깃에 커밋 금지)
+  api-key: ${TYPECAST_API_KEY:}
+  model: ssfm-v30
+  default-voice-id: tc_672c5f5ce59fac2a48faeaee
+  # 생성된 오디오 저장 폴더 (실행 디렉터리 기준)
+  output-dir: .data
+  queue:
+    # 동시 처리 워커 수. 플랜 동시요청 한도 이하로 (Free 2, Lite 5, Plus 15). 1이면 엄격한 순서 처리
+    concurrency: 2
+    # 대기 작업이 없을 때 폴링 간격
+    poll-interval: 1s
+    # 429/5xx/타임아웃 재시도 횟수와 기본 대기 (지수 백오프: 10s, 20s, 40s)
+    max-retry: 3
+    retry-backoff: 10s
+    # RUNNING 상태로 이 시간 이상 멈춘 작업은 READY로 되돌림
+    stale-after: 3m
+    # 배치 1건당 최대 항목 수
+    max-items: 1000
+
+# 인메모리 H2: 재시작할 때마다 빈 DB로 새로 만들어진다 (이전 배치 기록은 남지 않음)
+spring.datasource:
+  url: jdbc:h2:mem:typecast;DB_CLOSE_DELAY=-1
+  username: sa
+  password:
+
+spring.servlet.multipart:
+  max-file-size: 10MB
+  max-request-size: 10MB
+
+spring.jpa:
+  hibernate.ddl-auto: create-drop
+  open-in-view: false

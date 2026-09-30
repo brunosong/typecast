@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Typecast 대량 변환</title>
+  <style>
+    body { font-family: sans-serif; max-width: 960px; margin: 32px auto; padding: 0 16px; }
+    textarea, input, select, button { margin: 4px 0; padding: 8px; box-sizing: border-box; }
+    textarea { width: 100%; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .row > * { flex: 1; min-width: 140px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+    th, td { border-bottom: 1px solid #ddd; padding: 6px; text-align: left; vertical-align: top; }
+    tr.sel { background: #eef4ff; }
+    tbody#batches tr { cursor: pointer; }
+    .bar { background: #eee; height: 10px; border-radius: 5px; overflow: hidden; min-width: 120px; }
+    .bar > div { background: #3b82f6; height: 100%; }
+    .st { font-weight: bold; font-size: 12px; }
+    .SUCCEEDED { color: #15803d; } .FAILED { color: #c00; } .RUNNING { color: #2563eb; }
+    .RETRY_WAIT { color: #b45309; } .CANCELED, .READY { color: #777; }
+    #error { color: #c00; white-space: pre-wrap; }
+    .muted { color: #777; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Typecast 대량 변환</h1>
+  <p class="muted">한 줄에 한 문장(항목)씩 입력하거나 엑셀/텍스트 파일을 올리면 순서대로 음성 파일을 만듭니다. <a href="/">단건 변환</a></p>
+  <p class="muted">엑셀: 첫 번째 시트의 A열에 한 칸에 한 문장씩 입력 (1행에 "텍스트" 제목은 있어도 되고 없어도 됨) · <a href="/api/batches/template.xlsx">엑셀 양식 다운로드</a></p>
+
+  <textarea id="text" rows="8" placeholder="첫 번째 문장입니다.&#10;두 번째 문장입니다.&#10;세 번째 문장입니다."></textarea>
+  <div class="row">
+    <input id="file" type="file" accept=".xlsx,.xls,.txt,.csv,text/plain">
+    <input id="title" placeholder="배치 이름 (선택)">
+  </div>
+  <div class="row">
+    <input id="voiceId" placeholder="voice_id (비우면 기본값)">
+    <select id="emotion">
+      <option value="">smart (앞뒤 문장 문맥으로 자동)</option>
+      <option>normal</option><option>happy</option><option>sad</option><option>angry</option>
+      <option>whisper</option><option>toneup</option><option>tonedown</option>
+    </select>
+    <select id="format"><option>mp3</option><option>wav</option></select>
+  </div>
+  <button id="submit">대기열에 추가</button>
+  <div id="error"></div>
+
+  <h2>배치 목록</h2>
+  <table>
+    <thead><tr><th>#</th><th>이름</th><th>진행</th><th>완료/실패/전체</th><th>상태</th></tr></thead>
+    <tbody id="batches"></tbody>
+  </table>
+
+  <div id="detail" style="display:none">
+    <h2 id="detailTitle"></h2>
+    <div class="row" style="max-width:600px">
+      <button id="download">완료 파일 zip 다운로드</button>
+      <button id="retry">실패 항목 재시도</button>
+      <button id="cancel">대기 항목 취소</button>
+    </div>
+    <audio id="player" controls style="width:100%"></audio>
+    <table>
+      <thead><tr><th>순번</th><th>텍스트</th><th>상태</th><th>비고</th></tr></thead>
+      <tbody id="jobs"></tbody>
+    </table>
+  </div>
+
+  <script>
+    let selected = null;
+    const $ = id => document.getElementById(id);
+    const esc = s => (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+    $('submit').onclick = async () => {
+      $('error').textContent = '';
+      const opts = { title: $('title').value, voiceId: $('voiceId').value, emotion: $('emotion').value, format: $('format').value };
+      let res;
+      if ($('file').files.length) {
+        const form = new FormData();
+        form.append('file', $('file').files[0]);
+        Object.entries(opts).forEach(([k, v]) => v && form.append(k, v));
+        res = await fetch('/api/batches/upload', { method: 'POST', body: form });
+      } else {
+        res = await fetch('/api/batches', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...opts, items: $('text').value.split('\n') })
+        });
+      }
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { $('error').textContent = res.status + ' ' + (body.message || body.detail || JSON.stringify(body)); return; }
+      $('text').value = ''; $('file').value = '';
+      selected = body.id;
+      refresh();
+    };
+
+    async function refresh() {
+      const list = await (await fetch('/api/batches')).json();
+      $('batches').innerHTML = list.map(b => {
+        const settled = b.counts.SUCCEEDED + b.counts.FAILED + b.counts.CANCELED;
+        const pct = Math.round(settled * 100 / b.total);
+        const state = b.done ? '완료' : (b.counts.RUNNING ? '처리 중' : '대기');
+        return `<tr data-id="${b.id}" class="${b.id === selected ? 'sel' : ''}">
+          <td>${b.id}</td><td>${esc(b.title)}</td>
+          <td><div class="bar"><div style="width:${pct}%"></div></div></td>
+          <td>${b.counts.SUCCEEDED} / ${b.counts.FAILED} / ${b.total}</td><td>${state}</td></tr>`;
+      }).join('');
+      document.querySelectorAll('#batches tr').forEach(tr => tr.onclick = () => { selected = +tr.dataset.id; refresh(); });
+      if (selected) await showDetail(selected);
+    }
+
+    async function showDetail(id) {
+      const d = await (await fetch('/api/batches/' + id)).json();
+      $('detail').style.display = 'block';
+      $('detailTitle').textContent = `#${d.batch.id} ${d.batch.title} (${d.batch.format}, ${d.batch.emotion || 'smart'})`;
+      $('jobs').innerHTML = d.jobs.map(j => `<tr>
+          <td>${j.seq}</td><td>${esc(j.text)}</td>
+          <td class="st ${j.status}">${j.status}${j.retryCnt ? ' (' + j.retryCnt + ')' : ''}</td>
+          <td>${j.status === 'SUCCEEDED'
+              ? `<a href="#" data-play="/api/batches/${id}/jobs/${j.id}/audio">▶ 재생</a>`
+              : esc(j.resultMsg)}</td></tr>`).join('');
+      document.querySelectorAll('[data-play]').forEach(a => a.onclick = e => {
+        e.preventDefault(); $('player').src = a.dataset.play; $('player').play();
+      });
+    }
+
+    $('download').onclick = () => location.href = `/api/batches/${selected}/download`;
+    $('retry').onclick = async () => { await fetch(`/api/batches/${selected}/retry-failed`, { method: 'POST' }); refresh(); };
+    $('cancel').onclick = async () => { await fetch(`/api/batches/${selected}/cancel`, { method: 'POST' }); refresh(); };
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

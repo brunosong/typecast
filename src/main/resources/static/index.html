@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Typecast TTS Sample</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+    textarea, input, select, button { width: 100%; margin: 6px 0; padding: 8px; box-sizing: border-box; }
+    #error { color: #c00; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Typecast TTS Sample</h1>
+  <p><a href="/batch.html">여러 문장 한 번에 변환하기 →</a></p>
+  <textarea id="text" rows="4">안녕하세요! 타입캐스트 API 테스트입니다.</textarea>
+  <input id="voiceId" placeholder="voice_id (비우면 기본값)">
+  <select id="emotion">
+    <option value="">smart (문맥 자동)</option>
+    <option>normal</option><option>happy</option><option>sad</option><option>angry</option>
+    <option>whisper</option><option>toneup</option><option>tonedown</option>
+  </select>
+  <select id="format"><option>wav</option><option>mp3</option></select>
+  <button id="go">음성 생성</button>
+  <audio id="player" controls style="width:100%"></audio>
+  <a id="download" style="display:none">파일 다운로드</a>
+  <div id="error"></div>
+  <script>
+    document.getElementById('go').onclick = async () => {
+      const err = document.getElementById('error');
+      err.textContent = '';
+      const body = {
+        text: document.getElementById('text').value,
+        voiceId: document.getElementById('voiceId').value || null,
+        emotion: document.getElementById('emotion').value || null,
+        format: document.getElementById('format').value
+      };
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) { err.textContent = res.status + ' ' + await res.text(); return; }
+      const url = URL.createObjectURL(await res.blob());
+      const cd = res.headers.get('Content-Disposition') || '';
+      const name = (cd.match(/filename="?([^"]+)"?/) || [])[1] || 'tts.' + body.format;
+      const link = document.getElementById('download');
+      link.href = url;
+      link.download = name;
+      link.textContent = '파일 다운로드 (' + name + ')';
+      link.style.display = 'block';
+      const player = document.getElementById('player');
+      player.src = url;
+      player.play();
+    };
+  </script>
+</body>
+</html>
